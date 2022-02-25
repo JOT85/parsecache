@@ -3,6 +3,7 @@ package parsecache
 
 import (
 	"encoding/json"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -433,7 +434,7 @@ func (f *CachedDir) Get(open func() (fs.File, error), maxAge time.Duration) ([]f
 // Get the parsed file content, the results may be cached upto the specified `maxAge`.
 //
 // `open` should open the underlying file is required, this will be once or not at all.
-func (f *ConcurrentCachedFile[T]) Get(open func() (fs.File, error), parse func(fs.File) (T, error), maxAge time.Duration) (T, error) {
+func (f *ConcurrentCachedFile[T]) Get(open func() (fs.File, error), parser Parser[T], maxAge time.Duration) (T, error) {
 	// Ideally, return only with a read lock!
 	content, cachedAt, ok := f.Cached()
 	if ok && time.Since(cachedAt) < maxAge {
@@ -443,13 +444,13 @@ func (f *ConcurrentCachedFile[T]) Get(open func() (fs.File, error), parse func(f
 	// Otherwise we call the underlying get method with a write lock.
 	f.lock.Lock()
 	defer f.lock.Unlock()
-	return f.cachedFile.Get(open, parse, maxAge)
+	return f.cachedFile.Get(open, parser, maxAge)
 }
 
 // Get the parsed file content, the results may be cached upto the specified `maxAge`.
 //
 // `open` should open the underlying file is required, this will be once or not at all.
-func (f *CachedFile[T]) Get(open func() (fs.File, error), parse func(fs.File) (T, error), maxAge time.Duration) (T, error) {
+func (f *CachedFile[T]) Get(open func() (fs.File, error), parser Parser[T], maxAge time.Duration) (T, error) {
 	loaded := !f.lastLoadTime.IsZero()
 	loadTime := time.Now()
 
@@ -478,7 +479,7 @@ func (f *CachedFile[T]) Get(open func() (fs.File, error), parse func(fs.File) (T
 	}
 
 	// Actually read the file
-	content, err := parse(file)
+	content, err := parser(file)
 	if err != nil {
 		return f.content, err
 	}
@@ -489,11 +490,11 @@ func (f *CachedFile[T]) Get(open func() (fs.File, error), parse func(fs.File) (T
 	return f.content, nil
 }
 
-// Parser parses the file contents into the type `T`.
-type Parser[T any] func(fs.File) (T, error)
+// Parser parses content into the type `T`.
+type Parser[T any] func(io.Reader) (T, error)
 
 // JsonParser[T] is a value of type Parser[T] which parses a file as JSON.
-func JsonParser[T any](f fs.File) (T, error) {
+func JsonParser[T any](f io.Reader) (T, error) {
 	decoder := json.NewDecoder(f)
 	var parsed T
 	err := decoder.Decode(&parsed)
